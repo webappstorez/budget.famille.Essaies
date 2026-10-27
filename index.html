@@ -146,6 +146,9 @@ table.grid td{padding:3px 3px}
 .commit{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0;align-items:end}
 .commit div{flex:1 1 130px}
 .commit label{display:block;font-size:.8rem;color:var(--muted)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
+.modal .box{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:14px;max-width:640px;width:100%;max-height:82vh;overflow:auto;padding:16px}
+.modal .box h3{margin:0 0 6px}.modal .vrow{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px dashed var(--line)}.modal .vrow small{display:block}
 details.fold{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
 details.fold summary{cursor:pointer;font-weight:600}
 .rules ol{padding-left:1.2rem;display:grid;gap:10px;max-width:78ch}
@@ -272,7 +275,7 @@ ul.ins{margin:0;padding-left:1.1rem;display:grid;gap:5px;font-size:.92rem}
       <div class="actions">
         <label class="yearbox">Budget N (mai) <input class="in num" type="number" min="2000" max="2100" data-path="year" data-t="n" data-re="1" id="yearInput"></label>
         <button class="btn" data-act="export">Enregistrer</button>
-        <button class="btn" data-act="import">Ouvrir</button>
+        <button class="btn" data-act="import">Charger</button>
         <span class="who">Connecté : <b id="whoami"></b></span>
         <span class="small muted" id="cloud-ind" hidden></span>
         <button class="btn" data-act="logout">Se déconnecter</button>
@@ -2342,8 +2345,7 @@ function renderGate(msg=''){
       <label>Mot de passe<input class="in" id="g-pw" type="password" autocomplete="current-password" required></label>
       <div id="g-msg" class="gmsg" role="alert">${esc(msg||(hasCrypto?'':'Ce navigateur ne permet pas la connexion sécurisée. Ouvrez le fichier avec Chrome, Edge, Firefox ou Safari récent.'))}</div>
       <button class="btn primary" type="submit">Se connecter</button>
-    </form>
-    <button class="btn ghost small" data-act="gateImport" type="button">Ouvrir un fichier enregistré</button></div>`;
+    </form></div>`;
   const u=$('g-user');if(u)u.focus();
 }
 function migrateProjects(){
@@ -2649,8 +2651,10 @@ document.addEventListener('click',e=>{
       state.members.forEach(m=>{const r=RN.m[m.id];if(r)REVF.forEach(k=>{m[k]=r[k]})});state.revYear=Y;state.revOk=true;state.revNext=null;
       state.year=Y+1;state.ncFrozen={};state.provPlan={};state.provMeta=null;state.suivi={};state.members.forEach(m=>{state.suivi[m.id]=Array(12).fill('')});
       renderAll();showTab('syn');return `Clôture de l\u2019année ${Y} : passage à ${Y+1}`},
-    export(){const d0=new Date(),pad=v=>String(v).padStart(2,'0'),fname=`cotisations-famille-${state.year}-${d0.getFullYear()}${pad(d0.getMonth()+1)}${pad(d0.getDate())}-${pad(d0.getHours())}${pad(d0.getMinutes())}.json`;verPush({a:'Enregistrement du fichier',file:fname,ch:[]});const blob=new Blob([JSON.stringify(state,null,1)],{type:'application/json'});const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=fname;x.click();setTimeout(()=>URL.revokeObjectURL(u),1000);return 'Enregistrement du fichier'},
-    import(){$('fileIn').click()},
+    export(){if(cloud.ok){cloudSaveVersion();return}const d0=new Date(),pad=v=>String(v).padStart(2,'0'),fname=`cotisations-famille-${state.year}-${d0.getFullYear()}${pad(d0.getMonth()+1)}${pad(d0.getDate())}-${pad(d0.getHours())}${pad(d0.getMinutes())}.json`;verPush({a:'Enregistrement du fichier',file:fname,ch:[]});const blob=new Blob([JSON.stringify(state,null,1)],{type:'application/json'});const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=fname;x.click();setTimeout(()=>URL.revokeObjectURL(u),1000);return 'Enregistrement du fichier'},
+    import(){if(cloud.ok){cloudVersionsDialog();return}$('fileIn').click()},
+    loadVer(){cloudLoadVersion(b.dataset.id)},
+    closeDlg(){closeDlg()},
     cloudNow(){(async()=>{if(!cloud.ok)return;clearTimeout(cloud.pt);cloud.err='';try{await cloudSync();if(cloud.dirty)await cloudPush()}catch(e){cloud.err=cloudErr(e);cloud.status='error'}cloudInd();renderHist()})()},
     cloudOff(){if(!confirm('Se déconnecter du cloud sur cet appareil ? Les données restent enregistrées ici et dans le cloud, mais ne seront plus synchronisées.'))return;
       if(cloud.unsub)try{cloud.unsub()}catch(e){}
@@ -2686,6 +2690,8 @@ $('fileIn').addEventListener('change',e=>{
 // Une connexion Firebase commune à la famille (e-mail + mot de passe) protège l’accès ; les profils de l’outil servent à identifier qui modifie.
 const CLOUD_KEY='cotisations-famille-cloud';
 const FB_VER='10.12.2';
+// configuration publique de l’app Web Firebase (n’est pas un secret : l’accès est protégé par la connexion et les règles Firestore)
+const FB_DEFAULT_CFG={apiKey:'AIzaSyDcSzP7wTJjf3KtSqG3KKam5Fc7dyAUk-c',authDomain:'budget-essaies.firebaseapp.com',projectId:'budget-essaies',storageBucket:'budget-essaies.firebasestorage.app',messagingSenderId:'904599361716',appId:'1:904599361716:web:0f3c1477cc7101156d9fe1'};
 const cloud={cfg:null,email:'',rev:0,last:null,serial:null,ok:false,status:'off',err:'',dirty:false,pushing:false,api:null,unsub:null,pt:0,cid:Math.random().toString(36).slice(2,10)};
 function cloudLoadCfg(){try{const o=JSON.parse(localStorage.getItem(CLOUD_KEY)||'null');return o&&o.cfg&&o.cfg.apiKey?o:null}catch(e){return null}}
 function cloudSaveCfg(){try{if(cloud.cfg)localStorage.setItem(CLOUD_KEY,JSON.stringify({cfg:cloud.cfg,email:cloud.email,rev:cloud.rev,last:cloud.last}));else localStorage.removeItem(CLOUD_KEY)}catch(e){}}
@@ -2706,7 +2712,10 @@ async function firebaseApi(cfg){
     write:(exp,payload)=>F.runTransaction(db,async tx=>{const sn=await tx.get(ref);const r=sn.exists()?(sn.data().rev||0):0;
       if(r!==exp){const er=new Error('conflict');er.conflict=true;er.remote=sn.exists()?sn.data():null;throw er}
       tx.set(ref,{...payload,rev:r+1});return r+1}),
-    subscribe:cb=>F.onSnapshot(ref,sn=>{if(sn.exists())cb(sn.data())},()=>{})
+    subscribe:cb=>F.onSnapshot(ref,sn=>{if(sn.exists())cb(sn.data())},()=>{}),
+    saveVersion:async p=>(await F.addDoc(F.collection(db,'familles','cotisations','versions'),p)).id,
+    listVersions:async n=>(await F.getDocs(F.query(F.collection(db,'familles','cotisations','versions'),F.orderBy('t','desc'),F.limit(n)))).docs.map(d=>{const o=d.data();return {id:d.id,name:o.name,by:o.by,t:o.t,year:o.year}}),
+    getVersion:async id=>{const sn=await F.getDoc(F.doc(db,'familles','cotisations','versions',id));return sn.exists()?{id,...sn.data()}:null}
   };
 }
 async function cloudPack(j){
@@ -2721,7 +2730,7 @@ function cloudInd(){
   const el=$('cloud-ind');if(!el)return;
   const m={off:['',''],ok:['☁ synchronisé','Les données sont à jour dans le cloud'],wait:['☁ envoi en cours…','Modifications en cours d’envoi'],offline:['☁ hors ligne','Les modifications partiront dès le retour de la connexion'],auth:['☁ reconnexion requise','Reconnectez-vous à Firebase dans l’onglet Historique et accès'],error:['☁ erreur','Voir l’onglet Historique et accès']};
   const k=!cloud.cfg?'off':cloud.status==='ok'&&cloud.dirty?'wait':cloud.status;
-  const v=m[k]||m.off;el.hidden=!v[0];el.textContent=v[0];el.title=v[1];
+  const v=m[k]||m.off;if(cloud.flash){el.hidden=false;el.textContent=cloud.flash;el.title='';}else{el.hidden=!v[0];el.textContent=v[0];el.title=v[1]}
   if(typeof curTab!=='undefined'&&curTab==='hist'&&me&&!document.querySelector('#f-cloud :focus'))renderHist();
 }
 function cloudMark(j){
@@ -2731,7 +2740,7 @@ function cloudMark(j){
 }
 function cloudErr(e){
   const c=(e&&(e.code||e.message))||String(e);
-  if(/permission-denied/.test(c))return 'Accès refusé par les règles Firestore : publiez les règles indiquées ci-dessous.';
+  if(/permission-denied/.test(c))return 'Accès refusé par les règles Firestore : publiez les règles indiquées dans « Mise en place dans Firebase » (onglet Historique et accès).';
   if(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c))return 'E-mail ou mot de passe Firebase incorrect.';
   if(/operation-not-allowed/.test(c))return 'Activez la méthode « E-mail/Mot de passe » dans Firebase, Authentication.';
   if(/too-many-requests/.test(c))return 'Trop d’essais : patientez quelques minutes avant de réessayer.';
@@ -2816,11 +2825,52 @@ async function cloudBoot(){
   cloudInd();
 }
 window.addEventListener('online',()=>{if(cloud.cfg&&!cloud.ok)cloudConnect(null);else if(cloud.ok&&cloud.dirty)cloudPush()});
+// Versions enregistrées dans la base (à la place du téléchargement d’un fichier)
+function cloudVerName(){const d0=new Date(),pad=v=>String(v).padStart(2,'0');return `cotisations-famille-${state.year}-${d0.getFullYear()}${pad(d0.getMonth()+1)}${pad(d0.getDate())}-${pad(d0.getHours())}${pad(d0.getMinutes())}`}
+function cloudFlash(t){cloud.flash=t;cloudInd();setTimeout(()=>{if(cloud.flash===t){cloud.flash='';cloudInd()}},4000)}
+async function cloudSaveVersion(name,quiet){
+  if(!cloud.ok||!cloud.api)return false;
+  if(!quiet){name=prompt('Nom de la version enregistrée dans la base :',cloudVerName());if(name==null)return false;name=name.trim()||cloudVerName();
+    addLog('Enregistrement dans la base : « '+name+' »');verPush({a:'Enregistrement dans la base',file:name,ch:[]});await new Promise(r=>setTimeout(r,300))}
+  try{
+    const j=JSON.stringify(state),data=await cloudPack(j);
+    await cloud.api.saveVersion({name,by:me||'—',t:Date.now(),data,year:state.year,v:state.v});
+    if(!quiet){cloudFlash('☁ version « '+name+' » enregistrée');cloudMark(JSON.stringify(state))}
+    return true;
+  }catch(e){cloud.err=cloudErr(e);if(!quiet)alert('Enregistrement impossible : '+cloud.err);cloudInd();return false}
+}
+function closeDlg(){const m=document.getElementById('dlg');if(m)m.remove()}
+async function cloudVersionsDialog(){
+  closeDlg();
+  const m=document.createElement('div');m.className='modal';m.id='dlg';
+  m.innerHTML='<div class="box" role="dialog" aria-label="Versions enregistrées"><h3>Charger une version</h3><p class="small muted">Chargement de la liste…</p></div>';
+  document.body.appendChild(m);
+  m.addEventListener('click',e=>{if(e.target===m)closeDlg()});
+  const box=m.firstChild;
+  try{
+    const list=await cloud.api.listVersions(50);
+    box.innerHTML=`<h3>Charger une version</h3><p class="small muted">Versions enregistrées dans la base, de la plus récente à la plus ancienne. Charger une version remplace les données actuelles ; une copie des données actuelles est enregistrée juste avant.</p>
+      ${list.length?list.map(v=>`<div class="vrow"><span><b>${esc(v.name||'(sans nom)')}</b><small class="muted">${esc(v.by||'—')} · ${fdt(new Date(v.t||0).toISOString())} · budget ${esc(v.year)}</small></span><button type="button" class="btn small primary" data-act="loadVer" data-id="${esc(v.id)}">Charger</button></div>`).join(''):'<p class="muted">Aucune version enregistrée : utilisez « Enregistrer » pour en créer une.</p>'}
+      <div class="actions" style="margin-top:12px"><button type="button" class="btn" data-act="closeDlg">Fermer</button></div>`;
+  }catch(e){box.innerHTML=`<h3>Charger une version</h3><p class="small" style="color:var(--bad)">${esc(cloudErr(e))}</p><div class="actions"><button type="button" class="btn" data-act="closeDlg">Fermer</button></div>`}
+}
+async function cloudLoadVersion(id){
+  try{
+    const v=await cloud.api.getVersion(id);if(!v)throw new Error('Version introuvable');
+    if(!confirm(`Charger la version « ${v.name||''} » (${v.by||'?'}, ${new Date(v.t||0).toLocaleString('fr-FR')}) ?\n\nLes données actuelles seront remplacées. Une copie des données actuelles est enregistrée juste avant.`))return;
+    await cloudSaveVersion('Avant chargement de « '+(v.name||'')+' » ('+new Date().toLocaleString('fr-FR')+')',true);
+    closeDlg();
+    await cloudApply({data:v.data,rev:cloud.rev});
+    addLog('Chargement de la version « '+(v.name||'')+' »');verPush({a:'Chargement de la version',file:v.name||'',ch:[]});
+    cloud.dirty=true;cloud.serial=null;await cloudPush(true);cloudFlash('☁ version « '+(v.name||'')+' » chargée');
+    if(me)renderAll();
+  }catch(e){alert('Chargement impossible : '+cloudErr(e))}
+}
 function cloudHtml(){
-  const rules="rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /familles/{doc} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}";
+  const rules="rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /familles/{doc=**} {\n      allow read, write: if request.auth != null;\n    }\n  }\n}";
   const st={ok:'Connecté',wait:'Connexion en cours…',offline:'Hors ligne',auth:'Reconnexion requise',error:'Erreur',off:'Non configuré'}[cloud.status]||'—';
   const form=`<form id="f-cloud" class="uform" style="margin-top:10px;max-width:520px">
-      <label>Configuration Firebase (collez l’objet firebaseConfig)<textarea class="in" id="cl-cfg" rows="5" placeholder='{ apiKey: "…", authDomain: "…", projectId: "…", appId: "…" }' autocomplete="off" spellcheck="false">${cloud.cfg?esc(JSON.stringify(cloud.cfg,null,1)):''}</textarea></label>
+      <label>Configuration Firebase (collez l’objet firebaseConfig)<textarea class="in" id="cl-cfg" rows="5" placeholder='{ apiKey: "…", authDomain: "…", projectId: "…", appId: "…" }' autocomplete="off" spellcheck="false">${esc(JSON.stringify(cloud.cfg||FB_DEFAULT_CFG,null,1))}</textarea></label>
       <label>E-mail de la connexion famille<input class="in" id="cl-mail" type="email" autocomplete="username" required value="${esc(cloud.email||'')}"></label>
       <label>Mot de passe de la connexion famille<input class="in" id="cl-pw" type="password" autocomplete="current-password" required></label>
       <div><button class="btn primary" type="submit">${cloud.cfg?'Se reconnecter':'Se connecter et synchroniser'}</button></div></form>`;
