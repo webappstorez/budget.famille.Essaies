@@ -191,7 +191,7 @@ body.locked header.top,body.locked nav.tabs,body.locked main{display:none}
 .tipbox[hidden]{display:none}
 [data-tipid]:hover{cursor:help}
 .stack>*,.guide>.card{min-width:0;max-width:100%}.guide .tw{max-width:100%}
-.gd-lead{font-size:1.05rem;max-width:70ch}.gd-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.gd-lead{font-size:1.05rem;max-width:70ch}.gd-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip-wrap{border-radius:14px;padding:5px 11px;white-space:normal;line-height:1.35;text-align:left;max-width:100%}
 .gd-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,195px),1fr));gap:16px 12px;margin-top:18px}.gd-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
 .gd-card{position:relative;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}.gd-card h4{margin:0 0 4px;font-size:1rem}.gd-card p{margin:0 0 6px}
 .gd-n{position:absolute;top:-10px;left:12px;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--surface);font-weight:700;font-size:.85rem;display:flex;align-items:center;justify-content:center}.gd-grid .gd-card{padding-top:16px}
@@ -984,8 +984,8 @@ function refreshGuide(){
   $regles.innerHTML=`<div class="stack guide">
   <div class="card gd-hero">
     <h2>Comment ça marche</h2>
-    <p class="gd-lead">Cet outil partage les dépenses de la famille de façon <b>équitable</b> : chacun verse chaque mois une part calculée d’après ses revenus, les gros projets sont mis de côté petit à petit, et une fois par an on vérifie que tout est juste.</p>
-    <div class="gd-pills"><span class="chip info">Budget du 1er mai au 1er mai</span><span class="chip info">Un virement par mois et par personne</span><span class="chip info">Tout est tracé dans l’historique</span></div>
+    <p class="gd-lead">Cet outil partage les dépenses de la famille de façon <b>équitable</b> : chacun verse chaque mois une part calculée d’après ses revenus, les gros projets sont planifiés à part et à l’avance selon la capacité de chacun.</p>
+    <div class="gd-pills"><span class="chip info chip-wrap">Budget du 1er janvier au 31 décembre basé sur les revenus déclarés au dernier 1er mai, puis révisés au prochain 1er mai.</span><span class="chip info chip-wrap">Un virement par mois et par personne pour les dépenses mensuelles. Des virements à part pour les autres charges.</span><span class="chip info chip-wrap">Tout est tracé dans l’historique.</span></div>
   </div>
 
   <div class="card"><h3>Les cinq idées à retenir</h3>
@@ -2704,6 +2704,8 @@ function cloudParseCfg(txt){
   const cfg={};String(txt||'').replace(/["']?(\w+)["']?\s*:\s*["']([^"']*)["']/g,(m,k,v)=>{cfg[k]=v});
   return cfg.apiKey&&cfg.projectId&&cfg.appId?cfg:null;
 }
+// Seules les versions de l’année en cours et de l’année précédente sont conservées (selon la date d’enregistrement)
+const versionsCutoff=(now=new Date())=>new Date(now.getFullYear()-1,0,1).getTime();
 async function firebaseApi(cfg){
   const B=`https://www.gstatic.com/firebasejs/${FB_VER}/`;
   const [A,Au,F]=await Promise.all([import(B+'firebase-app.js'),import(B+'firebase-auth.js'),import(B+'firebase-firestore.js')]);
@@ -2718,7 +2720,10 @@ async function firebaseApi(cfg){
       if(r!==exp){const er=new Error('conflict');er.conflict=true;er.remote=sn.exists()?sn.data():null;throw er}
       tx.set(ref,{...payload,rev:r+1});return r+1}),
     subscribe:cb=>F.onSnapshot(ref,sn=>{if(sn.exists())cb(sn.data())},()=>{}),
-    saveVersion:async p=>(await F.addDoc(F.collection(db,'familles','cotisations','versions'),p)).id,
+    saveVersion:async p=>{
+      const col=F.collection(db,'familles','cotisations','versions');
+      try{const ds=(await F.getDocs(F.query(col,F.where('t','<',versionsCutoff())))).docs;for(const d of ds)await F.deleteDoc(d.ref)}catch(e){}
+      return (await F.addDoc(col,p)).id},
     listVersions:async n=>(await F.getDocs(F.query(F.collection(db,'familles','cotisations','versions'),F.orderBy('t','desc'),F.limit(n)))).docs.map(d=>{const o=d.data();return {id:d.id,name:o.name,by:o.by,t:o.t,year:o.year}}),
     getVersion:async id=>{const sn=await F.getDoc(F.doc(db,'familles','cotisations','versions',id));return sn.exists()?{id,...sn.data()}:null}
   };
@@ -2855,8 +2860,8 @@ async function cloudVersionsDialog(){
   m.addEventListener('click',e=>{if(e.target===m)closeDlg()});
   const box=m.firstChild;
   try{
-    const list=await cloud.api.listVersions(50);
-    box.innerHTML=`<h3>Charger une version</h3><p class="small muted">Versions enregistrées dans la base, de la plus récente à la plus ancienne. Charger une version remplace les données actuelles ; une copie des données actuelles est enregistrée juste avant.</p>
+    const cut=versionsCutoff(),list=(await cloud.api.listVersions(500)).filter(v=>(v.t||0)>=cut);
+    box.innerHTML=`<h3>Charger une version</h3><p class="small muted">Versions enregistrées dans la base, de la plus récente à la plus ancienne (seules les versions de l’année en cours et de l’année précédente sont conservées). Charger une version remplace les données actuelles ; une copie des données actuelles est enregistrée juste avant.</p>
       ${list.length?list.map(v=>`<div class="vrow"><span><b>${esc(v.name||'(sans nom)')}</b><small class="muted">${esc(v.by||'—')} · ${fdt(new Date(v.t||0).toISOString())} · budget ${esc(v.year)}</small></span><button type="button" class="btn small primary" data-act="loadVer" data-id="${esc(v.id)}">Charger</button></div>`).join(''):'<p class="muted">Aucune version enregistrée : utilisez « Enregistrer » pour en créer une.</p>'}
       <div class="actions" style="margin-top:12px"><button type="button" class="btn" data-act="closeDlg">Fermer</button></div>`;
   }catch(e){box.innerHTML=`<h3>Charger une version</h3><p class="small" style="color:var(--bad)">${esc(cloudErr(e))}</p><div class="actions"><button type="button" class="btn" data-act="closeDlg">Fermer</button></div>`}
