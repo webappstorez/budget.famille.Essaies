@@ -279,7 +279,6 @@ ul.ins{margin:0;padding-left:1.1rem;display:grid;gap:5px;font-size:.92rem}
         <span class="who">Connecté : <b id="whoami"></b></span>
         <span class="small muted" id="cloud-ind" hidden></span>
         <button class="btn" data-act="logout">Se déconnecter</button>
-        <input type="file" id="fileIn" accept="application/json,.json" hidden>
       </div>
     </div>
   </div>
@@ -387,6 +386,7 @@ function defaults(){
     users:[],log:[]
   };
 }
+const FRESH_LOCAL=!load();
 let state=load()||defaults();
 function load(){try{const s=localStorage.getItem(KEY);if(!s)return null;const o=JSON.parse(s);return o&&o.members?o:null}catch(e){return null}}
 let saveT=null;
@@ -2335,7 +2335,20 @@ async function checkDefaultPw(){
   box.innerHTML=u&&(await pbkdf2(DEFAULT_PW,u.salt))===u.hash
     ?`<ul class="alerts" style="margin-bottom:16px"><li class="warn"><span>Votre mot de passe est encore le mot de passe par défaut (${DEFAULT_PW}). <button class="btn small" data-act="goPw">Le changer</button></span></li></ul>`:'';
 }
+const cloudGateNeeded=()=>!(cloud.cfg&&(cloud.ok||cloud.status==='offline'||cloud.status==='wait'));
+function renderGateCloud(msg=''){
+  $gate.innerHTML=`<div class="gate-card"><h1>Cotisations de la famille</h1>
+    <p class="muted">Les données sont enregistrées dans la base Firebase de la famille, accessible à tous les profils. Connectez d’abord cet appareil avec l’e-mail et le mot de passe de la famille (une seule fois par appareil).</p>
+    <form id="f-gatecloud">
+      <label>E-mail de la famille<input class="in" id="gc-mail" type="email" autocomplete="username" required value="${esc(cloud.email||'')}"></label>
+      <label>Mot de passe de la famille<input class="in" id="gc-pw" type="password" autocomplete="current-password" required></label>
+      <div id="gc-msg" class="gmsg" role="alert">${esc(msg||cloud.err||'')}</div>
+      <button class="btn primary" type="submit">Se connecter à la base</button>
+    </form></div>`;
+  const u=$('gc-mail');if(u&&!u.value)u.focus();else if($('gc-pw'))$('gc-pw').focus();
+}
 function renderGate(msg=''){
+  if(cloudGateNeeded()){renderGateCloud(msg);return}
   const chips=state.users.map(u=>`<button type="button" class="btn small" data-act="pickUser" data-u="${esc(u.pseudo)}">${esc(u.pseudo)}</button>`).join('');
   $gate.innerHTML=`<div class="gate-card"><h1>Cotisations de la famille</h1>
     <p class="muted">Choisissez votre profil, puis saisissez votre mot de passe. Chaque modification est enregistrée à votre nom, avec la date et l\u2019heure.</p>
@@ -2506,6 +2519,14 @@ function doLogout(){if(me)addLog('Déconnexion');me=null;lock()}
 
 document.addEventListener('submit',async e=>{
   const f=e.target;e.preventDefault();
+  if(f.id==='f-gatecloud'){
+    const mail=$('gc-mail').value.trim(),pw=$('gc-pw').value,btn=f.querySelector('button');
+    cloud.cfg=cloud.cfg||FB_DEFAULT_CFG;cloud.email=mail;btn.disabled=true;$('gc-msg').textContent='Connexion…';
+    const ok=await cloudConnect(pw);
+    if(ok){cloudSaveCfg();addLog('Synchronisation Firebase activée (projet '+cloud.cfg.projectId+')',{u:'—'});save();renderGate()}
+    else renderGateCloud(cloud.err||'Connexion impossible.');
+    return;
+  }
   if(f.id==='f-gate'){
     if(!hasCrypto)return;
     const pseudo=$('g-user').value.trim(),pw=$('g-pw').value;
@@ -2560,7 +2581,6 @@ document.addEventListener('click',e=>{
   const tb=e.target.closest('[data-tab]');if(tb){showTab(tb.dataset.tab);return}
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,i=+b.dataset.i,j=+b.dataset.j,pi=+b.dataset.pi,li=+b.dataset.li;
-  if(a==='gateImport'){$('fileIn').click();return}
   if(a==='revView'){revView=b.dataset.v==='next'?'next':'cur';try{sessionStorage.setItem('cf-revview',revView)}catch(e){}renderRev();refresh();return}
   if(a==='pickUser'){$('g-user').value=b.dataset.u;$('g-pw').focus();return}
   if(a==='histAll'){histAll=true;renderHist();return}
@@ -2651,15 +2671,15 @@ document.addEventListener('click',e=>{
       state.members.forEach(m=>{const r=RN.m[m.id];if(r)REVF.forEach(k=>{m[k]=r[k]})});state.revYear=Y;state.revOk=true;state.revNext=null;
       state.year=Y+1;state.ncFrozen={};state.provPlan={};state.provMeta=null;state.suivi={};state.members.forEach(m=>{state.suivi[m.id]=Array(12).fill('')});
       renderAll();showTab('syn');return `Clôture de l\u2019année ${Y} : passage à ${Y+1}`},
-    export(){if(cloud.ok){cloudSaveVersion();return}const d0=new Date(),pad=v=>String(v).padStart(2,'0'),fname=`cotisations-famille-${state.year}-${d0.getFullYear()}${pad(d0.getMonth()+1)}${pad(d0.getDate())}-${pad(d0.getHours())}${pad(d0.getMinutes())}.json`;verPush({a:'Enregistrement du fichier',file:fname,ch:[]});const blob=new Blob([JSON.stringify(state,null,1)],{type:'application/json'});const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=fname;x.click();setTimeout(()=>URL.revokeObjectURL(u),1000);return 'Enregistrement du fichier'},
-    import(){if(cloud.ok){cloudVersionsDialog();return}$('fileIn').click()},
+    export(){if(cloud.ok){cloudSaveVersion();return}alert(cloudNeedMsg())},
+    import(){if(cloud.ok){cloudVersionsDialog();return}alert(cloudNeedMsg())},
     loadVer(){cloudLoadVersion(b.dataset.id)},
     closeDlg(){closeDlg()},
     cloudNow(){(async()=>{if(!cloud.ok)return;clearTimeout(cloud.pt);cloud.err='';try{await cloudSync();if(cloud.dirty)await cloudPush()}catch(e){cloud.err=cloudErr(e);cloud.status='error'}cloudInd();renderHist()})()},
     cloudOff(){if(!confirm('Se déconnecter du cloud sur cet appareil ? Les données restent enregistrées ici et dans le cloud, mais ne seront plus synchronisées.'))return;
       if(cloud.unsub)try{cloud.unsub()}catch(e){}
       try{cloud.api&&cloud.api.signOut()}catch(e){}
-      cloud.ok=false;cloud.cfg=null;cloud.rev=0;cloud.status='off';cloud.api=null;cloudSaveCfg();cloudInd();renderHist();return 'Synchronisation Firebase désactivée sur cet appareil'},
+      cloud.ok=false;cloud.cfg=null;cloud.rev=0;cloud.status='off';cloud.api=null;cloudSaveCfg();cloudInd();me=null;lock();return 'Synchronisation Firebase désactivée sur cet appareil'},
     dismissAlert(){const k=b.dataset.key;if(!k)return;state.dismiss=state.dismiss||{};state.dismiss[k]=true;refresh();return `Alerte masquée (${k.startsWith('miss:')?'versement non validé':'charges non couvertes'} · ${idxLabel(+k.split(':')[1])})`},
     restoreAlerts(){const n=Object.keys(state.dismiss||{}).length;state.dismiss={};refresh();return `Alertes de versements réaffichées (${n})`},
     addHistYear(){const y=parseInt(($('hm-year')||{}).value);if(!isFinite(y)||y<1990||y>=state.year){alert('Saisissez une année antérieure au budget '+state.year+' (1990 ou plus).');return}
@@ -2670,22 +2690,7 @@ document.addEventListener('click',e=>{
   if(A[a]){const bf=snap();const d=A[a]();save();if(typeof d==='string')addLog(d);pushUndo(bf,typeof d==='string'?d:'Action « '+a+' »')}
 });
 
-$('fileIn').addEventListener('change',e=>{
-  const f=e.target.files[0];if(!f)return;const r=new FileReader();
-  r.onload=()=>{try{
-    const o=JSON.parse(r.result);if(!o.members||!o.cc||!o.projects)throw 0;
-    if(!Array.isArray(o.users)||!o.users.length)o.users=state.users;
-    if(!Array.isArray(o.log))o.log=state.log;
-    state=o;if(!Array.isArray(state.versions))state.versions=[];
-    ensureAccounts().then(()=>{
-      migrate();
-      if(me&&state.users.some(u=>u.pseudo===me)){addLog('Ouverture du fichier « '+f.name+' »');verPush({a:'Ouverture du fichier',file:f.name,ch:[]});renderAll();save()}
-      else{me=null;save();lock()}});
-  }catch(err){alert('Fichier non reconnu : choisissez un fichier enregistré depuis cet outil.')}};
-  r.readAsText(f);e.target.value='';
-});
-
-/* ============ Synchronisation Firebase (facultative) ============ */
+/* ============ Synchronisation Firebase ============ */
 // Toutes les données (état complet) sont stockées dans un seul document Firestore : familles/cotisations.
 // Une connexion Firebase commune à la famille (e-mail + mot de passe) protège l’accès ; les profils de l’outil servent à identifier qui modifie.
 const CLOUD_KEY='cotisations-famille-cloud';
@@ -2784,6 +2789,7 @@ async function cloudSync(){
   const r=await cloud.api.read();
   if(!r){await cloudPush(true);return}
   const who=`${r.by||'?'}, le ${new Date(r.t||0).toLocaleString('fr-FR')}`;
+  if(cloud.rev===0&&FRESH_LOCAL){await cloudApply(r);return}
   if(cloud.rev===0){
     if(confirm(`Des données existent déjà dans le cloud (dernière modification par ${who}).\n\nOK : les charger sur cet appareil (les données de cet appareil seront remplacées).\nAnnuler : envoyer les données de cet appareil à la place.`))await cloudApply(r);
     else if(confirm('Remplacer les données du cloud par celles de cet appareil ?')){cloud.rev=r.rev||0;await cloudPush(true)}
@@ -2839,6 +2845,7 @@ async function cloudSaveVersion(name,quiet){
     return true;
   }catch(e){cloud.err=cloudErr(e);if(!quiet)alert('Enregistrement impossible : '+cloud.err);cloudInd();return false}
 }
+const cloudNeedMsg=()=>cloud.cfg?'Hors ligne : l’enregistrement et le chargement dans la base seront possibles dès le retour de la connexion.':'Connectez d’abord l’outil à la base (onglet Historique et accès, bloc Synchronisation Firebase).';
 function closeDlg(){const m=document.getElementById('dlg');if(m)m.remove()}
 async function cloudVersionsDialog(){
   closeDlg();
@@ -2875,7 +2882,7 @@ function cloudHtml(){
       <label>Mot de passe de la connexion famille<input class="in" id="cl-pw" type="password" autocomplete="current-password" required></label>
       <div><button class="btn primary" type="submit">${cloud.cfg?'Se reconnecter':'Se connecter et synchroniser'}</button></div></form>`;
   return `<div class="card"><h2>Synchronisation Firebase</h2>
-    <p class="small muted">Facultative. Les données de tous les profils sont enregistrées dans votre base Firebase et mises à jour sur chaque appareil. Une seule connexion Firebase est partagée par la famille ; les profils ci-dessus servent à savoir qui modifie.</p>
+    <p class="small muted">Les données de tous les profils sont enregistrées dans votre base Firebase et mises à jour sur chaque appareil. Une seule connexion Firebase est partagée par la famille ; les profils ci-dessus servent à savoir qui modifie.</p>
     <p><span class="chip ${cloud.status==='ok'?'ok':cloud.cfg?'warn':'plain'}">${st}</span>
       ${cloud.cfg?` projet <b>${esc(cloud.cfg.projectId)}</b>${cloud.last?` · dernière synchronisation ${new Date(cloud.last).toLocaleString('fr-FR')}`:''} · version ${cloud.rev}${cloud.dirty?' · modifications en attente d’envoi':''}`:''}</p>
     ${cloud.err?`<p class="small" style="color:var(--bad)" role="alert">${esc(cloud.err)}</p>`:''}
